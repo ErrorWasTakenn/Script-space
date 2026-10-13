@@ -627,3 +627,743 @@ connect(settingsBtn.Activated, function()
 		TweenService:Create(showTab, tweenInfoTab, { Position = UDim2.fromOffset(3, 21) }):Play()
 	end)
 end)
+local function applyMorph(userId)
+	local _, _, hum = getChar()
+	if not hum then return end
+
+	local success, desc = pcall(function()
+		return Players:GetHumanoidDescriptionFromUserId(userId)
+	end)
+
+	if success and desc then
+		if not origHumanoidDescription then
+			pcall(function()
+				origHumanoidDescription = hum:GetAppliedDescription()
+			end)
+		end
+		hum:ApplyDescription(desc)
+	end
+end
+
+local function resetMorph()
+	local _, _, hum = getChar()
+	if hum and origHumanoidDescription then
+		hum:ApplyDescription(origHumanoidDescription)
+	end
+end
+
+local function setMorph(state)
+	morphEnabled = state
+	setToggleVisual(morphBtn, "Morph", state)
+	if state then
+		local targetId = getUserIdFromInput(morphBox.Text)
+		if targetId then
+			applyMorph(targetId)
+		else
+			morphEnabled = false
+			setToggleVisual(morphBtn, "Morph", false)
+		end
+	else
+		resetMorph()
+	end
+end
+
+connect(morphBtn.Activated, function()
+	playDing()
+	setMorph(not morphEnabled)
+end)
+
+local function cleanVoidZones()
+	for _, part in ipairs(workspace:GetDescendants()) do
+		if part:IsA("BasePart") then
+			local name = string.lower(part.Name)
+			if string.find(name, "void") or string.find(name, "killzone") or string.find(name, "deadzone") then
+				part:Destroy()
+			end
+		end
+	end
+end
+
+local function setAntiVoid(state)
+	antiVoidEnabled = state
+	setToggleVisual(antiVoidBtn, "Anti Void", state)
+	if state then
+		cleanVoidZones()
+	end
+end
+
+connect(antiVoidBtn.Activated, function()
+	playDing()
+	setAntiVoid(not antiVoidEnabled)
+end)
+
+local function stopFly()
+	flying = false
+	if bodyVel then bodyVel:Destroy() bodyVel = nil end
+	if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
+	local _, _, hum = getChar()
+	if hum then hum.PlatformStand = false end
+	setToggleVisual(flyBtn, "Fly", false)
+end
+
+local function startFly()
+	local _, hrp, hum = getChar()
+	if not hrp or not hum then return end
+	hum.PlatformStand = true
+
+	bodyVel = Instance.new("BodyVelocity")
+	bodyVel.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+	bodyVel.Velocity = Vector3.zero
+	bodyVel.Parent = hrp
+
+	bodyGyro = Instance.new("BodyGyro")
+	bodyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+	bodyGyro.P = 1e4
+	bodyGyro.CFrame = hrp.CFrame
+	bodyGyro.Parent = hrp
+
+	flying = true
+	setToggleVisual(flyBtn, "Fly", true)
+end
+
+connect(flyBtn.Activated, function()
+	playDing()
+	if flying then stopFly() else startFly() end
+end)
+
+connect(speedBox.FocusLost, function()
+	local n = tonumber(speedBox.Text)
+	if n then flySpeed = math.clamp(n, 1, 5000) end
+	speedBox.Text = tostring(flySpeed)
+end)
+
+local function setFreecam(state)
+	freecamming = state
+	setToggleVisual(freecamBtn, "Freecam", state)
+	local cam = workspace.CurrentCamera
+	local _, hrp = getChar()
+
+	if state then
+		if cam then
+			freecamPos = cam.CFrame.Position
+		end
+		if hrp then hrp.Anchored = true end
+	else
+		if hrp then hrp.Anchored = false end
+		if cam then
+			cam.CameraType = Enum.CameraType.Custom
+			local _, _, hum = getChar()
+			cam.CameraSubject = hum or player.Character
+		end
+	end
+end
+
+connect(freecamBtn.Activated, function()
+	playDing()
+	setFreecam(not freecamming)
+end)
+
+connect(freecamBox.FocusLost, function()
+	local n = tonumber(freecamBox.Text)
+	if n then
+		freecamSpeed = math.clamp(n, 1, 5000)
+		freecamBox.Text = tostring(freecamSpeed)
+	else
+		freecamBox.Text = tostring(freecamSpeed)
+	end
+end)
+
+local function setWalkSpeed(state)
+	speedEnabled = state
+	setToggleVisual(walkSpeedBtn, "Speed", state)
+	if not state then
+		local _, _, hum = getChar()
+		if hum then hum.WalkSpeed = 16 end
+	end
+end
+
+connect(walkSpeedBtn.Activated, function()
+	playDing()
+	setWalkSpeed(not speedEnabled)
+end)
+
+connect(walkSpeedBox.FocusLost, function()
+	local n = tonumber(walkSpeedBox.Text)
+	if n then
+		customSpeed = math.max(0, n)
+		walkSpeedBox.Text = tostring(customSpeed)
+	end
+end)
+
+local function setJumpPower(state)
+	jumpEnabled = state
+	setToggleVisual(jumpPowerBtn, "Jump", state)
+	if not state then
+		local _, _, hum = getChar()
+		if hum then
+			if hum.UseJumpPower then hum.JumpPower = 50 else hum.JumpHeight = 7.2 end
+		end
+	end
+end
+
+connect(jumpPowerBtn.Activated, function()
+	playDing()
+	setJumpPower(not jumpEnabled)
+end)
+
+connect(jumpPowerBox.FocusLost, function()
+	local n = tonumber(jumpPowerBox.Text)
+	if n then
+		customJump = math.max(0, n)
+		jumpPowerBox.Text = tostring(customJump)
+	end
+end)
+
+local function setGravity(state)
+	gravityEnabled = state
+	setToggleVisual(gravityBtn, "Gravity", state)
+	if not state then workspace.Gravity = defaultGravity end
+end
+
+connect(gravityBtn.Activated, function()
+	playDing()
+	setGravity(not gravityEnabled)
+end)
+
+connect(gravityBox.FocusLost, function()
+	local n = tonumber(gravityBox.Text)
+	if n then
+		customGravity = n
+		gravityBox.Text = tostring(customGravity)
+	end
+end)
+
+local function setFullBright(state)
+	fullBrightEnabled = state
+	setToggleVisual(fullBrightBtn, "Full Bright", state)
+	if not state then
+		Lighting.Ambient = origAmbient
+		Lighting.OutdoorAmbient = origOutdoorAmbient
+		Lighting.Brightness = origBrightness
+		Lighting.GlobalShadows = origGlobalShadows
+		Lighting.ClockTime = origClockTime
+	end
+end
+
+connect(fullBrightBtn.Activated, function()
+	playDing()
+	setFullBright(not fullBrightEnabled)
+end)
+
+local function setNoFog(state)
+	noFogEnabled = state
+	setToggleVisual(noFogBtn, "No Fog", state)
+	if state then
+		Lighting.FogStart = 0
+		Lighting.FogEnd = 1e9
+		for _, v in ipairs(Lighting:GetChildren()) do
+			if v:IsA("Atmosphere") then v.Density = 0 end
+		end
+	else
+		Lighting.FogStart = origFogStart
+		Lighting.FogEnd = origFogEnd
+	end
+end
+
+connect(noFogBtn.Activated, function()
+	playDing()
+	setNoFog(not noFogEnabled)
+end)
+
+local function setSpectate(state)
+	spectating = state
+	setToggleVisual(spectateBtn, "Spectate", state)
+	local cam = workspace.CurrentCamera
+
+	if state then
+		local target = findTargetPlayer(spectateBox.Text)
+		if target and target.Character then
+			spectateTarget = target
+			spectateBox.Text = target.Name
+			if cam then
+				cam.CameraSubject = target.Character:FindFirstChildOfClass("Humanoid") or target.Character:FindFirstChild("HumanoidRootPart")
+			end
+		else
+			spectating = false
+			setToggleVisual(spectateBtn, "Spectate", false)
+		end
+	else
+		spectateTarget = nil
+		if cam then
+			local _, _, hum = getChar()
+			cam.CameraSubject = hum or player.Character
+		end
+	end
+end
+
+connect(spectateBtn.Activated, function()
+	playDing()
+	setSpectate(not spectating)
+end)
+
+connect(tpPlayerBtn.Activated, function()
+	playDing()
+	local target = findTargetPlayer(tpPlayerBox.Text)
+	if target and target.Character then
+		tpPlayerBox.Text = target.Name
+		local _, hrp = getChar()
+		local targetHrp = target.Character:FindFirstChild("HumanoidRootPart")
+		if hrp and targetHrp then
+			hrp.CFrame = targetHrp.CFrame * CFrame.new(0, 0, 3)
+		end
+	end
+end)
+
+local function holdButton(btn, setter)
+	connect(btn.InputBegan, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			setter(true)
+		end
+	end)
+	connect(btn.InputEnded, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			setter(false)
+		end
+	end)
+end
+holdButton(upBtn, function(v) uiUp = v end)
+holdButton(downBtn, function(v) uiDown = v end)
+
+connect(UserInputService.InputBegan, function(input, processed)
+	if processed then return end
+	if input.KeyCode == Enum.KeyCode.E then keyUp = true end
+	if input.KeyCode == Enum.KeyCode.Q then keyDown = true end
+end)
+
+connect(UserInputService.InputEnded, function(input)
+	if input.KeyCode == Enum.KeyCode.E then keyUp = false end
+	if input.KeyCode == Enum.KeyCode.Q then keyDown = false end
+end)
+
+connect(UserInputService.JumpRequest, function()
+	if infJump then
+		local _, _, hum = getChar()
+		if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+	end
+end)
+
+connect(infJumpBtn.Activated, function()
+	playDing()
+	infJump = not infJump
+	setToggleVisual(infJumpBtn, "Infinite Jump", infJump)
+end)
+
+local function restoreCollisions()
+	for part in pairs(savedCollide) do
+		if part and part.Parent then part.CanCollide = true end
+	end
+	table.clear(savedCollide)
+end
+
+local function setNoclip(state)
+	noclip = state
+	setToggleVisual(noclipBtn, "Noclip", state)
+	if not state then restoreCollisions() end
+end
+
+connect(noclipBtn.Activated, function()
+	playDing()
+	setNoclip(not noclip)
+end)
+
+local function clearFloatPlatform()
+	if floatPlatform then floatPlatform:Destroy() floatPlatform = nil end
+end
+
+local function setFloat(state)
+	floating = state
+	setToggleVisual(floatBtn, "Float", state)
+	if state then
+		if not floatPlatform then
+			floatPlatform = make("Part", {
+				Name = "ErrorsAdminFloatPlatform",
+				Size = Vector3.new(10, 1, 10),
+				Anchored = true,
+				CanCollide = true,
+				Transparency = 1,
+			}, workspace)
+		end
+	else
+		clearFloatPlatform()
+	end
+end
+
+connect(floatBtn.Activated, function()
+	playDing()
+	setFloat(not floating)
+end)
+
+local function clearInvisibleState()
+	invisible = false
+	if invisPlatform then invisPlatform:Destroy() invisPlatform = nil end
+	setToggleVisual(invisBtn, "Invisible", false)
+end
+
+local function setInvisible(state)
+	invisible = state
+	setToggleVisual(invisBtn, "Invisible", state)
+	local _, hrp = getChar()
+	if state and hrp then
+		hrp.CFrame = hrp.CFrame - Vector3.new(0, HIDE_DEPTH, 0)
+		invisPlatform = make("Part", {
+			Name = "ErrorsAdminInvisPlatform",
+			Size = Vector3.new(30, 1, 30),
+			Anchored = true,
+			CanCollide = true,
+			Transparency = 1,
+			CFrame = hrp.CFrame - Vector3.new(0, 3.5, 0),
+		}, workspace)
+	else
+		clearInvisibleState()
+	end
+end
+
+connect(invisBtn.Activated, function()
+	playDing()
+	setInvisible(not invisible)
+end)
+
+local function applyHighlight(model, color, name)
+	if not model:FindFirstChild(name) then
+		local hl = Instance.new("Highlight")
+		hl.Name = name
+		hl.FillColor = color
+		hl.OutlineColor = color
+		hl.FillTransparency = 0.5
+		hl.OutlineTransparency = 0
+		hl.Parent = model
+	end
+end
+
+local function removeHighlight(model, name)
+	local hl = model:FindFirstChild(name)
+	if hl then hl:Destroy() end
+end
+
+local function updateEsp()
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player and p.Character then
+			if playerEspEnabled then
+				applyHighlight(p.Character, Color3.fromRGB(0, 255, 100), "PlayerESP_Highlight")
+			else
+				removeHighlight(p.Character, "PlayerESP_Highlight")
+			end
+		end
+	end
+
+	if npcEspEnabled then
+		for _, obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(obj) then
+				applyHighlight(obj, Color3.fromRGB(0, 150, 255), "NPCESP_Highlight")
+			end
+		end
+	else
+		for _, obj in ipairs(workspace:GetDescendants()) do
+			if obj:IsA("Model") then removeHighlight(obj, "NPCESP_Highlight") end
+		end
+	end
+end
+
+connect(playerEspBtn.Activated, function()
+	playDing()
+	playerEspEnabled = not playerEspEnabled
+	setToggleVisual(playerEspBtn, "Player ESP", playerEspEnabled)
+	updateEsp()
+end)
+
+connect(npcEspBtn.Activated, function()
+	playDing()
+	npcEspEnabled = not npcEspEnabled
+	setToggleVisual(npcEspBtn, "NPC ESP", npcEspEnabled)
+	updateEsp()
+end)
+
+local function removeTouchTpTool()
+	if tpTool then tpTool:Destroy() tpTool = nil end
+end
+
+local function giveTouchTpTool()
+	removeTouchTpTool()
+	tpTool = Instance.new("Tool")
+	tpTool.Name = "Touch TP"
+	tpTool.RequiresHandle = false
+
+	tpTool.Activated:Connect(function()
+		local mouse = player:GetMouse()
+		local _, hrp = getChar()
+		if mouse and hrp and mouse.Hit then
+			hrp.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
+		end
+	end)
+
+	tpTool.Parent = player:WaitForChild("Backpack")
+end
+
+local function setTouchTp(state)
+	touchTpEnabled = state
+	setToggleVisual(tpBtn, "Touch TP", state)
+	if state then giveTouchTpTool() else removeTouchTpTool() end
+end
+
+connect(tpBtn.Activated, function()
+	playDing()
+	setTouchTp(not touchTpEnabled)
+end)
+
+local function setFov(state)
+	fovEnabled = state
+	setToggleVisual(fovBtn, "FOV", state)
+	local cam = workspace.CurrentCamera
+	if not state and cam then cam.FieldOfView = defaultFov end
+end
+
+connect(fovBtn.Activated, function()
+	playDing()
+	setFov(not fovEnabled)
+end)
+
+connect(fovBox.FocusLost, function()
+	local n = tonumber(fovBox.Text)
+	if n then
+		customFov = math.max(1, n)
+		fovBox.Text = tostring(customFov)
+	end
+end)
+
+local frameCount = 0
+local lastFpsUpdate = os.clock()
+
+connect(RunService.Stepped, function()
+	local _, hrp, hum = getChar()
+
+	local vInput = 0
+	if keyUp or uiUp then vInput += 1 end
+	if keyDown or uiDown then vInput -= 1 end
+
+	if vInput ~= 0 and hrp then
+		if floating and floatPlatform then
+			floatPlatform.CFrame = floatPlatform.CFrame + Vector3.new(0, vInput * 1, 0)
+			hrp.CFrame = hrp.CFrame + Vector3.new(0, vInput * 1, 0)
+		elseif not flying then
+			hrp.CFrame = hrp.CFrame + Vector3.new(0, vInput * 1, 0)
+		end
+	end
+
+	if hum then
+		if speedEnabled then hum.WalkSpeed = customSpeed end
+		if jumpEnabled then
+			if hum.UseJumpPower then hum.JumpPower = customJump else hum.JumpHeight = customJump end
+		end
+	end
+
+	if gravityEnabled then workspace.Gravity = customGravity end
+	if noFogEnabled then Lighting.FogStart = 0 Lighting.FogEnd = 1e9 end
+
+	if antiVoidEnabled and hrp then
+		local voidThreshold = workspace.FallenPartsDestroyHeight + 15
+		if hrp.Position.Y <= voidThreshold then
+			hrp.CFrame = CFrame.new(hrp.Position.X, voidThreshold + 50, hrp.Position.Z)
+			hrp.AssemblyLinearVelocity = Vector3.zero
+		end
+	end
+
+	if noclip then
+		local char = player.Character
+		if char then
+			for _, part in ipairs(char:GetDescendants()) do
+				if part:IsA("BasePart") and part.CanCollide then
+					savedCollide[part] = true
+					part.CanCollide = false
+				end
+			end
+		end
+	end
+
+	if floating and floatPlatform then
+		local _, fHrp, h = getChar()
+		if fHrp and h then
+			if h:GetState() == Enum.HumanoidStateType.Freefall or h:GetState() == Enum.HumanoidStateType.Landed or h:GetState() == Enum.HumanoidStateType.Running then
+				if fHrp.AssemblyLinearVelocity.Y <= 0 and (vInput == 0) then
+					floatPlatform.CFrame = CFrame.new(fHrp.Position.X, fHrp.Position.Y - 3.5, fHrp.Position.Z)
+				end
+			end
+		end
+	end
+end)
+
+connect(RunService.RenderStepped, function(dt)
+	local cam = workspace.CurrentCamera
+
+	if showPingFps then
+		frameCount += 1
+		local now = os.clock()
+		if now - lastFpsUpdate >= 0.001 then
+			local fps = math.floor(frameCount / math.max(now - lastFpsUpdate, 0.0001))
+			local ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
+			hudText.Text = string.format("FPS: %d | Ping: %dms", fps, ping)
+			frameCount = 0
+			lastFpsUpdate = now
+		end
+	end
+
+	if cam and fovEnabled then cam.FieldOfView = customFov end
+
+	if fullBrightEnabled then
+		Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+		Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+		Lighting.Brightness = 2
+		Lighting.GlobalShadows = false
+		Lighting.ClockTime = 14
+	end
+
+	if playerEspEnabled or npcEspEnabled then updateEsp() end
+
+	if freecamming and cam then
+		local _, _, hum = getChar()
+		local moveDir = hum and hum.MoveDirection or Vector3.zero
+
+		local look3D = cam.CFrame.LookVector
+		local right3D = cam.CFrame.RightVector
+
+		local forwardInput = moveDir:Dot(Vector3.new(look3D.X, 0, look3D.Z).Unit)
+		local rightInput = moveDir:Dot(Vector3.new(right3D.X, 0, right3D.Z).Unit)
+
+		local v = 0
+		if keyUp or uiUp then v += 1 end
+		if keyDown or uiDown then v -= 1 end
+
+		local camMove = (look3D * forwardInput) + (right3D * rightInput) + Vector3.new(0, v, 0)
+		if camMove.Magnitude > 0 then
+			freecamPos = freecamPos + (camMove.Unit * (freecamSpeed * dt))
+		end
+
+		cam.CFrame = CFrame.new(freecamPos) * cam.CFrame.Rotation
+	end
+
+	if flying then
+		local _, hrp, hum = getChar()
+		if hrp and hum and bodyVel and bodyVel.Parent and cam then
+			local look, right = cam.CFrame.LookVector, cam.CFrame.RightVector
+			local flatLook = Vector3.new(look.X, 0, look.Z)
+			local flatRight = Vector3.new(right.X, 0, right.Z)
+
+			local move = hum.MoveDirection
+			local f = flatLook.Magnitude > 0.001 and move:Dot(flatLook.Unit) or 0
+			local r = flatRight.Magnitude > 0.001 and move:Dot(flatRight.Unit) or 0
+
+			local v = 0
+			if keyUp or uiUp then v += 1 end
+			if keyDown or uiDown then v -= 1 end
+
+			bodyVel.Velocity = (look * f + right * r + Vector3.new(0, v, 0)) * flySpeed
+			bodyGyro.CFrame = cam.CFrame
+		end
+	end
+end)
+
+connect(player.CharacterAdded, function()
+	stopFly()
+	setFreecam(false)
+	setSpectate(false)
+	clearInvisibleState()
+	setFloat(false)
+	table.clear(savedCollide)
+	if touchTpEnabled then giveTouchTpTool() end
+	if morphEnabled then
+		task.wait(0.5)
+		local targetId = getUserIdFromInput(morphBox.Text)
+		if targetId then applyMorph(targetId) end
+	end
+end)
+
+do
+	local dragging, dragStart, startPos, dragInput
+
+	connect(titleBar.InputBegan, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = window.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+
+	connect(titleBar.InputChanged, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end)
+
+	connect(UserInputService.InputChanged, function(input)
+		if dragging and input == dragInput then
+			local delta = input.Position - dragStart
+			window.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + delta.X,
+				startPos.Y.Scale, startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+end
+
+local minimized = false
+connect(minBtn.Activated, function()
+	playDing()
+	minimized = not minimized
+	mainTab.Visible = not minimized and not inSettings
+	settingsTab.Visible = not minimized and inSettings
+	local targetSize = minimized and MINI_SIZE or FULL_SIZE
+	TweenService:Create(window, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Size = targetSize }):Play()
+	minBtn.Text = minimized and "+" or "–"
+end)
+
+connect(closeBtn.Activated, function()
+	playDing()
+	titleTween:Cancel()
+	textTween:Cancel()
+	stopFly()
+	setFreecam(false)
+	setSpectate(false)
+	setNoclip(false)
+	setInvisible(false)
+	setFloat(false)
+	setTouchTp(false)
+	setFov(false)
+	setWalkSpeed(false)
+	setJumpPower(false)
+	setGravity(false)
+	setFullBright(false)
+	setNoFog(false)
+	setAntiVoid(false)
+	setMorph(false)
+	
+	playerEspEnabled = false
+	npcEspEnabled = false
+	updateEsp()
+
+	SoundService.Volume = 1
+	if colorCorrection then colorCorrection:Destroy() end
+
+	local cam = workspace.CurrentCamera
+	if cam then 
+		cam.FieldOfView = defaultFov 
+		cam.CameraType = Enum.CameraType.Custom
+		cam.CameraSubject = getChar() or player.Character 
+	end
+
+	for _, c in ipairs(connections) do c:Disconnect() end
+	table.clear(connections)
+	gui:Destroy()
+end)
+
