@@ -1,39 +1,14 @@
---[[
-	Errors Admin (LocalScript)
-	Put in: StarterPlayer > StarterPlayerScripts
-
-	Features: 
-	  - Fly (with speed box)
-	  - Freecam (Camera flies freely, body stays anchored)
-	  - Spectate (Partial name search & auto-fill)
-	  - TP to Player (Teleports directly to target player)
-	  - Walk Speed (Toggle + Box, frame-looped)
-	  - Jump Power (Toggle + Box, frame-looped)
-	  - Gravity (Toggle + Box)
-	  - Full Bright (Lighting override)
-	  - No Fog (Clears map fog & atmosphere)
-	  - Noclip
-	  - Invisible (Teleports character under map once with safety platform)
-	  - Float
-	  - Infinite Jump
-	  - Player ESP & NPC ESP
-	  - Touch TP Tool
-	  - Unlimited FOV (Toggle + Box)
-	  - Gray Theme with Sound Effects & Smooth Tweens (Shortened Compact Window)
-]]
-
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
 local Lighting = game:GetService("Lighting")
+local Stats = game:GetService("Stats")
 
 local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
----------------------------------------------------------------------
--- State
----------------------------------------------------------------------
 local flying = false
 local freecamming = false
 local spectating = false
@@ -50,6 +25,19 @@ local infJump = false
 local playerEspEnabled = false
 local npcEspEnabled = false
 local touchTpEnabled = false
+local antiVoidEnabled = false
+local morphEnabled = false
+local soundsMuted = false
+
+local invertColorsEnabled = false
+local blackAndWhiteEnabled = false
+
+local showHeaders = true
+local showPlayerCat = true
+local showVisualsCat = true
+local showWorldCat = true
+local showFunCat = true
+local showPingFps = false
 
 local flySpeed = 50
 local freecamSpeed = 50
@@ -80,24 +68,29 @@ local connections = {}
 
 local tpTool = nil
 local spectateTarget = nil
-local freecamCFrame = nil
+local origHumanoidDescription = nil
+
+local freecamPos = Vector3.zero
 local HIDE_DEPTH = 30
 
----------------------------------------------------------------------
--- Sound Effect
----------------------------------------------------------------------
 local clickSound = Instance.new("Sound")
 clickSound.SoundId = "rbxassetid://6895079853"
 clickSound.Volume = 0.5
 clickSound.Parent = SoundService
 
 local function playDing()
-	clickSound:Play()
+	if not soundsMuted then
+		clickSound:Play()
+	end
 end
 
----------------------------------------------------------------------
--- Helper Functions
----------------------------------------------------------------------
+local colorCorrection = Lighting:FindFirstChild("ErrorsAdminCC")
+if not colorCorrection then
+	colorCorrection = Instance.new("ColorCorrectionEffect")
+	colorCorrection.Name = "ErrorsAdminCC"
+	colorCorrection.Parent = Lighting
+end
+
 local function connect(signal, fn)
 	local c = signal:Connect(fn)
 	table.insert(connections, c)
@@ -113,19 +106,43 @@ end
 local function findTargetPlayer(query)
 	if not query or query == "" then return nil end
 	query = string.lower(query)
+
+	local otherPlayers = {}
 	for _, p in ipairs(Players:GetPlayers()) do
-		local name = string.lower(p.Name)
-		local displayName = string.lower(p.DisplayName)
-		if string.find(name, query, 1, true) or string.find(displayName, query, 1, true) then
+		if p ~= player then
+			table.insert(otherPlayers, p)
+		end
+	end
+
+	if query == "random" then
+		if #otherPlayers > 0 then
+			return otherPlayers[math.random(1, #otherPlayers)]
+		end
+		return nil
+	end
+
+	for _, p in ipairs(Players:GetPlayers()) do
+		if string.lower(p.Name) == query or string.find(string.lower(p.Name), query, 1, true) then
 			return p
 		end
 	end
 	return nil
 end
 
----------------------------------------------------------------------
--- UI Setup & Theme (Shortened Window Size)
----------------------------------------------------------------------
+local function getUserIdFromInput(input)
+	local num = tonumber(input)
+	if num then return num end
+
+	local target = findTargetPlayer(input)
+	if target then return target.UserId end
+
+	local success, userId = pcall(function()
+		return Players:GetUserIdFromNameAsync(input)
+	end)
+	if success and userId then return userId end
+	return nil
+end
+
 local function make(class, props, parent)
 	local obj = Instance.new(class)
 	for k, v in pairs(props) do
@@ -136,83 +153,165 @@ local function make(class, props, parent)
 end
 
 local COLOR_BG = Color3.fromRGB(45, 45, 50)
-local COLOR_BAR = Color3.fromRGB(30, 30, 35)
 local COLOR_BTN = Color3.fromRGB(65, 65, 70)
 local COLOR_ON = Color3.fromRGB(70, 160, 90)
 local COLOR_OFF = Color3.fromRGB(180, 60, 60)
+local COLOR_CATEGORY = Color3.fromRGB(35, 35, 40)
 local COLOR_TEXT = Color3.fromRGB(240, 240, 245)
+
+local PIXEL_FONT = Enum.Font.SpecialElite
 
 local gui = make("ScreenGui", {
 	Name = "ErrorsAdmin",
 	ResetOnSpawn = false,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-}, player:WaitForChild("PlayerGui"))
+}, playerGui)
 
-local FULL_SIZE = UDim2.fromOffset(210, 290)
-local MINI_SIZE = UDim2.fromOffset(210, 24)
+local hudFrame = make("Frame", {
+	Name = "PingFpsHUD",
+	Size = UDim2.fromOffset(130, 24),
+	Position = UDim2.fromOffset(10, 10),
+	BackgroundColor3 = Color3.fromRGB(25, 25, 30),
+	BorderSizePixel = 0,
+	Visible = false,
+	Active = true,
+}, gui)
+make("UICorner", { CornerRadius = UDim.new(0, 5) }, hudFrame)
+
+local hudText = make("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "FPS: -- | Ping: --ms",
+	TextColor3 = COLOR_TEXT,
+	Font = PIXEL_FONT,
+	TextSize = 10,
+}, hudFrame)
+
+do
+	local dragging, dragStart, startPos, dragInput
+
+	connect(hudFrame.InputBegan, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = hudFrame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+
+	connect(hudFrame.InputChanged, function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end)
+
+	connect(UserInputService.InputChanged, function(input)
+		if dragging and input == dragInput then
+			local delta = input.Position - dragStart
+			hudFrame.Position = UDim2.new(
+				startPos.X.Scale, startPos.X.Offset + delta.X,
+				startPos.Y.Scale, startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+end
+
+local FULL_SIZE = UDim2.fromOffset(210, 200)
+local MINI_SIZE = UDim2.fromOffset(210, 22)
 
 local window = make("Frame", {
 	Name = "Window",
 	Size = FULL_SIZE,
-	Position = UDim2.new(1, -230, 0, 70),
+	Position = UDim2.new(1, -225, 0, 60),
 	BackgroundColor3 = COLOR_BG,
 	BorderSizePixel = 0,
 	ClipsDescendants = true,
 }, gui)
-make("UICorner", { CornerRadius = UDim.new(0, 6) }, window)
+make("UICorner", { CornerRadius = UDim.new(0, 5) }, window)
 
 local titleBar = make("Frame", {
 	Name = "TitleBar",
-	Size = UDim2.new(1, 0, 0, 22),
-	BackgroundColor3 = COLOR_BAR,
+	Size = UDim2.new(1, 0, 0, 20),
+	BackgroundColor3 = Color3.fromRGB(20, 20, 25),
 	BorderSizePixel = 0,
 }, window)
 
-make("TextLabel", {
-	Size = UDim2.new(1, -50, 1, 0),
-	Position = UDim2.fromOffset(6, 0),
+local titleText = make("TextLabel", {
+	Size = UDim2.new(1, -65, 1, 0),
+	Position = UDim2.fromOffset(5, 0),
 	BackgroundTransparency = 1,
 	Text = "Errors Admin",
-	TextColor3 = COLOR_TEXT,
-	Font = Enum.Font.GothamBold,
-	TextSize = 11,
+	TextColor3 = Color3.fromRGB(255, 255, 255),
+	Font = PIXEL_FONT,
+	TextSize = 12,
 	TextXAlignment = Enum.TextXAlignment.Left,
 }, titleBar)
 
+local titleTweenInfo = TweenInfo.new(2.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true)
+local titleTween = TweenService:Create(titleBar, titleTweenInfo, {
+	BackgroundColor3 = Color3.fromRGB(230, 230, 235)
+})
+local textTween = TweenService:Create(titleText, titleTweenInfo, {
+	TextColor3 = Color3.fromRGB(20, 20, 25)
+})
+titleTween:Play()
+textTween:Play()
+
 local function titleButton(text, xOffset, color)
 	local b = make("TextButton", {
-		Size = UDim2.fromOffset(18, 16),
+		Size = UDim2.fromOffset(16, 14),
 		Position = UDim2.new(1, xOffset, 0, 3),
 		BackgroundColor3 = color,
 		Text = text,
 		TextColor3 = COLOR_TEXT,
-		Font = Enum.Font.GothamBold,
-		TextSize = 11,
+		Font = PIXEL_FONT,
+		TextSize = 10,
 	}, titleBar)
 	make("UICorner", { CornerRadius = UDim.new(0, 3) }, b)
 	return b
 end
 
-local minBtn = titleButton("–", -44, COLOR_BTN)
-local closeBtn = titleButton("X", -22, Color3.fromRGB(190, 60, 60))
+local settingsBtn = titleButton("⚙", -57, COLOR_BTN)
+local minBtn = titleButton("–", -38, COLOR_BTN)
+local closeBtn = titleButton("X", -19, Color3.fromRGB(190, 60, 60))
 
-local content = make("ScrollingFrame", {
-	Name = "Content",
-	Size = UDim2.new(1, -8, 1, -26),
-	Position = UDim2.fromOffset(4, 24),
+local mainTab = make("ScrollingFrame", {
+	Name = "MainTab",
+	Size = UDim2.new(1, -6, 1, -22),
+	Position = UDim2.fromOffset(3, 21),
 	BackgroundTransparency = 1,
 	BorderSizePixel = 0,
 	ScrollBarThickness = 2,
 	CanvasSize = UDim2.new(),
 	AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	ScrollingDirection = Enum.ScrollingDirection.Y,
+	Visible = true,
 }, window)
 
-make("UIListLayout", {
-	Padding = UDim.new(0, 3),
-	SortOrder = Enum.SortOrder.LayoutOrder,
-}, content)
-make("UIPadding", { PaddingRight = UDim.new(0, 4), PaddingBottom = UDim.new(0, 3) }, content)
+local settingsTab = make("ScrollingFrame", {
+	Name = "SettingsTab",
+	Size = UDim2.new(1, -6, 1, -22),
+	Position = UDim2.fromOffset(3, 21),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 2,
+	CanvasSize = UDim2.new(),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+	Visible = false,
+}, window)
+
+local function makeLayout(parent)
+	make("UIListLayout", {
+		Padding = UDim.new(0, 3),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, parent)
+	make("UIPadding", { PaddingRight = UDim.new(0, 3), PaddingBottom = UDim.new(0, 3) }, parent)
+end
+makeLayout(mainTab)
+makeLayout(settingsTab)
 
 local order = 0
 local function nextOrder()
@@ -220,16 +319,74 @@ local function nextOrder()
 	return order
 end
 
-local function button(text)
+local function makeCategory(title)
+	local catFrame = make("Frame", {
+		Size = UDim2.new(1, 0, 0, 20),
+		BackgroundTransparency = 1,
+		ClipsDescendants = true,
+		LayoutOrder = nextOrder(),
+	}, mainTab)
+
+	local headerBtn = make("TextButton", {
+		Size = UDim2.new(1, 0, 0, 20),
+		BackgroundColor3 = COLOR_CATEGORY,
+		Text = "▲  " .. title,
+		TextColor3 = COLOR_TEXT,
+		Font = PIXEL_FONT,
+		TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, catFrame)
+	make("UICorner", { CornerRadius = UDim.new(0, 4) }, headerBtn)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 6) }, headerBtn)
+
+	local container = make("Frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		Position = UDim2.fromOffset(0, 22),
+		BackgroundTransparency = 1,
+	}, catFrame)
+
+	local listLayout = make("UIListLayout", {
+		Padding = UDim.new(0, 2),
+		SortOrder = Enum.SortOrder.LayoutOrder,
+	}, container)
+
+	local expanded = true
+
+	local function updateCategorySize()
+		if not showHeaders then
+			headerBtn.Visible = false
+			container.Position = UDim2.fromOffset(0, 0)
+			catFrame.Size = UDim2.new(1, 0, 0, listLayout.AbsoluteContentSize.Y)
+		else
+			headerBtn.Visible = true
+			container.Position = UDim2.fromOffset(0, 22)
+			local targetH = expanded and (22 + listLayout.AbsoluteContentSize.Y) or 20
+			catFrame.Size = UDim2.new(1, 0, 0, targetH)
+		end
+	end
+
+	connect(headerBtn.Activated, function()
+		playDing()
+		expanded = not expanded
+		headerBtn.Text = (expanded and "▲  " or "▼  ") .. title
+		updateCategorySize()
+	end)
+
+	connect(listLayout:GetPropertyChangedSignal("AbsoluteContentSize"), updateCategorySize)
+
+	return container, catFrame, updateCategorySize
+end
+
+local function categoryButton(parent, text)
 	local b = make("TextButton", {
-		Size = UDim2.new(1, 0, 0, 22),
+		Size = UDim2.new(1, 0, 0, 20),
 		BackgroundColor3 = COLOR_BTN,
 		Text = text,
 		TextColor3 = COLOR_TEXT,
-		Font = Enum.Font.GothamMedium,
+		Font = PIXEL_FONT,
 		TextSize = 11,
 		LayoutOrder = nextOrder(),
-	}, content)
+	}, parent)
 	make("UICorner", { CornerRadius = UDim.new(0, 4) }, b)
 	return b
 end
@@ -240,19 +397,19 @@ local function setToggleVisual(btn, name, state)
 	TweenService:Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundColor3 = targetColor }):Play()
 end
 
-local function toggleInputRow(toggleName, defaultInputText)
+local function toggleInputRow(parent, toggleName, defaultInputText)
 	local row = make("Frame", {
-		Size = UDim2.new(1, 0, 0, 22),
+		Size = UDim2.new(1, 0, 0, 20),
 		BackgroundTransparency = 1,
 		LayoutOrder = nextOrder(),
-	}, content)
+	}, parent)
 
 	local btn = make("TextButton", {
 		Size = UDim2.new(0.55, -2, 1, 0),
 		BackgroundColor3 = COLOR_OFF,
 		Text = toggleName .. ": OFF",
 		TextColor3 = COLOR_TEXT,
-		Font = Enum.Font.GothamMedium,
+		Font = PIXEL_FONT,
 		TextSize = 11,
 	}, row)
 	make("UICorner", { CornerRadius = UDim.new(0, 4) }, btn)
@@ -263,7 +420,7 @@ local function toggleInputRow(toggleName, defaultInputText)
 		BackgroundColor3 = COLOR_BTN,
 		Text = defaultInputText,
 		TextColor3 = COLOR_TEXT,
-		Font = Enum.Font.Gotham,
+		Font = PIXEL_FONT,
 		TextSize = 11,
 		ClearTextOnFocus = false,
 	}, row)
@@ -272,23 +429,25 @@ local function toggleInputRow(toggleName, defaultInputText)
 	return btn, box
 end
 
----------------------------------------------------------------------
--- UI Controls Creation
----------------------------------------------------------------------
-local flyBtn, speedBox = toggleInputRow("Fly", tostring(flySpeed))
+local playerCat, playerCatFrame, updatePlayerCat = makeCategory("Player Controls")
+local visualsCat, visualsCatFrame, updateVisualsCat = makeCategory("ESP & Visuals")
+local worldCat, worldCatFrame, updateWorldCat = makeCategory("World & Teleport")
+local funCat, funCatFrame, updateFunCat = makeCategory("Fun Features")
+
+local flyBtn, speedBox = toggleInputRow(playerCat, "Fly", tostring(flySpeed))
 
 local udRow = make("Frame", {
-	Size = UDim2.new(1, 0, 0, 22),
+	Size = UDim2.new(1, 0, 0, 20),
 	BackgroundTransparency = 1,
 	LayoutOrder = nextOrder(),
-}, content)
+}, playerCat)
 
 local upBtn = make("TextButton", {
 	Size = UDim2.new(0.5, -2, 1, 0),
 	BackgroundColor3 = COLOR_BTN,
 	Text = "▲ Up",
 	TextColor3 = COLOR_TEXT,
-	Font = Enum.Font.GothamMedium,
+	Font = PIXEL_FONT,
 	TextSize = 11,
 }, udRow)
 
@@ -298,33 +457,144 @@ local downBtn = make("TextButton", {
 	BackgroundColor3 = COLOR_BTN,
 	Text = "▼ Down",
 	TextColor3 = COLOR_TEXT,
-	Font = Enum.Font.GothamMedium,
+	Font = PIXEL_FONT,
 	TextSize = 11,
 }, udRow)
 
 make("UICorner", { CornerRadius = UDim.new(0, 4) }, upBtn)
 make("UICorner", { CornerRadius = UDim.new(0, 4) }, downBtn)
 
-local freecamBtn = button("")
-local spectateBtn, spectateBox = toggleInputRow("Spectate", "PlayerName")
-local tpPlayerBtn, tpPlayerBox = toggleInputRow("TP Player", "PlayerName")
+local walkSpeedBtn, walkSpeedBox = toggleInputRow(playerCat, "Speed", tostring(customSpeed))
+local jumpPowerBtn, jumpPowerBox = toggleInputRow(playerCat, "Jump", tostring(customJump))
+local noclipBtn = categoryButton(playerCat, "")
+local invisBtn = categoryButton(playerCat, "")
+local floatBtn = categoryButton(playerCat, "")
+local infJumpBtn = categoryButton(playerCat, "")
+local morphBtn, morphBox = toggleInputRow(playerCat, "Morph", "Username/ID")
 
-local walkSpeedBtn, walkSpeedBox = toggleInputRow("Speed", tostring(customSpeed))
-local jumpPowerBtn, jumpPowerBox = toggleInputRow("Jump", tostring(customJump))
-local gravityBtn, gravityBox = toggleInputRow("Gravity", tostring(customGravity))
+local playerEspBtn = categoryButton(visualsCat, "")
+local npcEspBtn = categoryButton(visualsCat, "")
+local fullBrightBtn = categoryButton(visualsCat, "")
+local noFogBtn = categoryButton(visualsCat, "")
+local fovBtn, fovBox = toggleInputRow(visualsCat, "FOV", tostring(math.floor(defaultFov + 0.5)))
 
-local fullBrightBtn = button("")
-local noFogBtn = button("")
-local noclipBtn = button("")
-local invisBtn = button("")
-local floatBtn = button("")
-local infJumpBtn = button("")
-local playerEspBtn = button("")
-local npcEspBtn = button("")
-local tpBtn = button("")
-local fovBtn, fovBox = toggleInputRow("FOV", tostring(math.floor(defaultFov + 0.5)))
+local freecamBtn, freecamBox = toggleInputRow(worldCat, "Freecam", tostring(freecamSpeed))
+local spectateBtn, spectateBox = toggleInputRow(worldCat, "Spectate", "PlayerName")
+local tpPlayerBtn, tpPlayerBox = toggleInputRow(worldCat, "TP Player", "PlayerName")
+local tpBtn = categoryButton(worldCat, "")
+local gravityBtn, gravityBox = toggleInputRow(worldCat, "Gravity", tostring(customGravity))
+local antiVoidBtn = categoryButton(worldCat, "")
 
-setToggleVisual(freecamBtn, "Freecam", false)
+local invertColorsBtn = categoryButton(funCat, "")
+local blackAndWhiteBtn = categoryButton(funCat, "")
+
+local function updateColorEffects()
+	if invertColorsEnabled then
+		colorCorrection.Contrast = -2
+		colorCorrection.TintColor = Color3.fromRGB(255, 255, 255)
+	else
+		colorCorrection.Contrast = 0
+		colorCorrection.TintColor = Color3.fromRGB(255, 255, 255)
+	end
+
+	if blackAndWhiteEnabled then
+		colorCorrection.Saturation = -1
+	else
+		colorCorrection.Saturation = 0
+	end
+end
+
+connect(invertColorsBtn.Activated, function()
+	playDing()
+	invertColorsEnabled = not invertColorsEnabled
+	setToggleVisual(invertColorsBtn, "Invert Colors", invertColorsEnabled)
+	updateColorEffects()
+end)
+
+connect(blackAndWhiteBtn.Activated, function()
+	playDing()
+	blackAndWhiteEnabled = not blackAndWhiteEnabled
+	setToggleVisual(blackAndWhiteBtn, "Black & White", blackAndWhiteEnabled)
+	updateColorEffects()
+end)
+
+setToggleVisual(invertColorsBtn, "Invert Colors", false)
+setToggleVisual(blackAndWhiteBtn, "Black & White", false)
+
+local showPingFpsBtn = categoryButton(settingsTab, "")
+local hideHeadersBtn = categoryButton(settingsTab, "")
+local disableSoundsBtn = categoryButton(settingsTab, "")
+local togglePlayerCatBtn = categoryButton(settingsTab, "")
+local toggleVisualsCatBtn = categoryButton(settingsTab, "")
+local toggleWorldCatBtn = categoryButton(settingsTab, "")
+local toggleFunCatBtn = categoryButton(settingsTab, "")
+
+local function updateSettingsVisuals()
+	setToggleVisual(showPingFpsBtn, "Show Ping & FPS", showPingFps)
+	setToggleVisual(hideHeadersBtn, "Hide Headers", not showHeaders)
+	setToggleVisual(disableSoundsBtn, "Mute Sounds", soundsMuted)
+	setToggleVisual(togglePlayerCatBtn, "Player Group", showPlayerCat)
+	setToggleVisual(toggleVisualsCatBtn, "Visuals Group", showVisualsCat)
+	setToggleVisual(toggleWorldCatBtn, "World Group", showWorldCat)
+	setToggleVisual(toggleFunCatBtn, "Fun Group", showFunCat)
+end
+
+connect(showPingFpsBtn.Activated, function()
+	showPingFps = not showPingFps
+	hudFrame.Visible = showPingFps
+	updateSettingsVisuals()
+	playDing()
+end)
+
+connect(hideHeadersBtn.Activated, function()
+	showHeaders = not showHeaders
+	updatePlayerCat()
+	updateVisualsCat()
+	updateWorldCat()
+	updateFunCat()
+	updateSettingsVisuals()
+	playDing()
+end)
+
+connect(disableSoundsBtn.Activated, function()
+	soundsMuted = not soundsMuted
+	SoundService.Volume = soundsMuted and 0 or 1
+	updateSettingsVisuals()
+	playDing()
+end)
+
+connect(togglePlayerCatBtn.Activated, function()
+	showPlayerCat = not showPlayerCat
+	playerCatFrame.Visible = showPlayerCat
+	updateSettingsVisuals()
+	playDing()
+end)
+
+connect(toggleVisualsCatBtn.Activated, function()
+	showVisualsCat = not showVisualsCat
+	visualsCatFrame.Visible = showVisualsCat
+	updateSettingsVisuals()
+	playDing()
+end)
+
+connect(toggleWorldCatBtn.Activated, function()
+	showWorldCat = not showWorldCat
+	worldCatFrame.Visible = showWorldCat
+	updateSettingsVisuals()
+	playDing()
+end)
+
+connect(toggleFunCatBtn.Activated, function()
+	showFunCat = not showFunCat
+	funCatFrame.Visible = showFunCat
+	updateSettingsVisuals()
+	playDing()
+end)
+
+updateSettingsVisuals()
+
+setToggleVisual(morphBtn, "Morph", false)
+setToggleVisual(antiVoidBtn, "Anti Void", false)
 setToggleVisual(walkSpeedBtn, "Speed", false)
 setToggleVisual(jumpPowerBtn, "Jump", false)
 setToggleVisual(gravityBtn, "Gravity", false)
@@ -338,401 +608,22 @@ setToggleVisual(playerEspBtn, "Player ESP", false)
 setToggleVisual(npcEspBtn, "NPC ESP", false)
 setToggleVisual(tpBtn, "Touch TP", false)
 
----------------------------------------------------------------------
--- Logic Handlers
----------------------------------------------------------------------
-local function stopFly()
-	flying = false
-	if bodyVel then bodyVel:Destroy() bodyVel = nil end
-	if bodyGyro then bodyGyro:Destroy() bodyGyro = nil end
-	local _, _, hum = getChar()
-	if hum then hum.PlatformStand = false end
-	setToggleVisual(flyBtn, "Fly", false)
-end
+local inSettings = false
+local tweenInfoTab = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 
-local function startFly()
-	local _, hrp, hum = getChar()
-	if not hrp or not hum then return end
-	hum.PlatformStand = true
-
-	bodyVel = Instance.new("BodyVelocity")
-	bodyVel.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-	bodyVel.Velocity = Vector3.zero
-	bodyVel.Parent = hrp
-
-	bodyGyro = Instance.new("BodyGyro")
-	bodyGyro.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
-	bodyGyro.P = 1e4
-	bodyGyro.CFrame = hrp.CFrame
-	bodyGyro.Parent = hrp
-
-	flying = true
-	setToggleVisual(flyBtn, "Fly", true)
-end
-
-connect(flyBtn.Activated, function()
+connect(settingsBtn.Activated, function()
 	playDing()
-	if flying then stopFly() else startFly() end
-end)
+	inSettings = not inSettings
+	settingsBtn.BackgroundColor3 = inSettings and COLOR_ON or COLOR_BTN
 
-connect(speedBox.FocusLost, function()
-	local n = tonumber(speedBox.Text)
-	if n then flySpeed = math.clamp(n, 1, 5000) end
-	speedBox.Text = tostring(flySpeed)
-end)
+	local hideTab = inSettings and mainTab or settingsTab
+	local showTab = inSettings and settingsTab or mainTab
 
-local function setFreecam(state)
-	freecamming = state
-	setToggleVisual(freecamBtn, "Freecam", state)
-	local cam = workspace.CurrentCamera
-	local _, hrp = getChar()
-
-	if state then
-		if cam then
-			freecamCFrame = cam.CFrame
-			cam.CameraType = Enum.CameraType.Scriptable
-		end
-		if hrp then hrp.Anchored = true end
-	else
-		if hrp then hrp.Anchored = false end
-		if cam then
-			cam.CameraType = Enum.CameraType.Custom
-			local _, _, hum = getChar()
-			cam.CameraSubject = hum or player.Character
-		end
-	end
-end
-
-connect(freecamBtn.Activated, function()
-	playDing()
-	setFreecam(not freecamming)
-end)
-
-local function setWalkSpeed(state)
-	speedEnabled = state
-	setToggleVisual(walkSpeedBtn, "Speed", state)
-	if not state then
-		local _, _, hum = getChar()
-		if hum then hum.WalkSpeed = 16 end
-	end
-end
-
-connect(walkSpeedBtn.Activated, function()
-	playDing()
-	setWalkSpeed(not speedEnabled)
-end)
-
-connect(walkSpeedBox.FocusLost, function()
-	local n = tonumber(walkSpeedBox.Text)
-	if n then
-		customSpeed = math.max(0, n)
-		walkSpeedBox.Text = tostring(customSpeed)
-	end
-end)
-
-local function setJumpPower(state)
-	jumpEnabled = state
-	setToggleVisual(jumpPowerBtn, "Jump", state)
-	if not state then
-		local _, _, hum = getChar()
-		if hum then
-			if hum.UseJumpPower then hum.JumpPower = 50 else hum.JumpHeight = 7.2 end
-		end
-	end
-end
-
-connect(jumpPowerBtn.Activated, function()
-	playDing()
-	setJumpPower(not jumpEnabled)
-end)
-
-connect(jumpPowerBox.FocusLost, function()
-	local n = tonumber(jumpPowerBox.Text)
-	if n then
-		customJump = math.max(0, n)
-		jumpPowerBox.Text = tostring(customJump)
-	end
-end)
-
-local function setGravity(state)
-	gravityEnabled = state
-	setToggleVisual(gravityBtn, "Gravity", state)
-	if not state then workspace.Gravity = defaultGravity end
-end
-
-connect(gravityBtn.Activated, function()
-	playDing()
-	setGravity(not gravityEnabled)
-end)
-
-connect(gravityBox.FocusLost, function()
-	local n = tonumber(gravityBox.Text)
-	if n then
-		customGravity = n
-		gravityBox.Text = tostring(customGravity)
-	end
-end)
-
-local function setFullBright(state)
-	fullBrightEnabled = state
-	setToggleVisual(fullBrightBtn, "Full Bright", state)
-	if not state then
-		Lighting.Ambient = origAmbient
-		Lighting.OutdoorAmbient = origOutdoorAmbient
-		Lighting.Brightness = origBrightness
-		Lighting.GlobalShadows = origGlobalShadows
-		Lighting.ClockTime = origClockTime
-	end
-end
-
-connect(fullBrightBtn.Activated, function()
-	playDing()
-	setFullBright(not fullBrightEnabled)
-end)
-
-local function setNoFog(state)
-	noFogEnabled = state
-	setToggleVisual(noFogBtn, "No Fog", state)
-	if state then
-		Lighting.FogStart = 0
-		Lighting.FogEnd = 1e9
-		for _, v in ipairs(Lighting:GetChildren()) do
-			if v:IsA("Atmosphere") then v.Density = 0 end
-		end
-	else
-		Lighting.FogStart = origFogStart
-		Lighting.FogEnd = origFogEnd
-	end
-end
-
-connect(noFogBtn.Activated, function()
-	playDing()
-	setNoFog(not noFogEnabled)
-end)
-
-local function setSpectate(state)
-	spectating = state
-	setToggleVisual(spectateBtn, "Spectate", state)
-	local cam = workspace.CurrentCamera
-
-	if state then
-		local target = findTargetPlayer(spectateBox.Text)
-		if target and target.Character then
-			spectateTarget = target
-			spectateBox.Text = target.Name
-			if cam then
-				cam.CameraSubject = target.Character:FindFirstChildOfClass("Humanoid") or target.Character:FindFirstChild("HumanoidRootPart")
-			end
-		else
-			spectating = false
-			setToggleVisual(spectateBtn, "Spectate", false)
-		end
-	else
-		spectateTarget = nil
-		if cam then
-			local _, _, hum = getChar()
-			cam.CameraSubject = hum or player.Character
-		end
-	end
-end
-
-connect(spectateBtn.Activated, function()
-	playDing()
-	setSpectate(not spectating)
-end)
-
-connect(tpPlayerBtn.Activated, function()
-	playDing()
-	local target = findTargetPlayer(tpPlayerBox.Text)
-	if target and target.Character then
-		tpPlayerBox.Text = target.Name
-		local _, hrp = getChar()
-		local targetHrp = target.Character:FindFirstChild("HumanoidRootPart")
-		if hrp and targetHrp then
-			hrp.CFrame = targetHrp.CFrame * CFrame.new(0, 0, 3)
-		end
-	end
-end)
-
-local function holdButton(btn, setter)
-	connect(btn.InputBegan, function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			setter(true)
-		end
+	TweenService:Create(hideTab, tweenInfoTab, { Position = UDim2.fromOffset(inSettings and -180 or 180, 21) }):Play()
+	task.delay(0.1, function()
+		hideTab.Visible = false
+		showTab.Position = UDim2.fromOffset(inSettings and 180 or -180, 21)
+		showTab.Visible = true
+		TweenService:Create(showTab, tweenInfoTab, { Position = UDim2.fromOffset(3, 21) }):Play()
 	end)
-	connect(btn.InputEnded, function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			setter(false)
-		end
-	end)
-end
-holdButton(upBtn, function(v) uiUp = v end)
-holdButton(downBtn, function(v) uiDown = v end)
-
-connect(UserInputService.InputBegan, function(input, processed)
-	if processed then return end
-	if input.KeyCode == Enum.KeyCode.E then keyUp = true end
-	if input.KeyCode == Enum.KeyCode.Q then keyDown = true end
 end)
-
-connect(UserInputService.InputEnded, function(input)
-	if input.KeyCode == Enum.KeyCode.E then keyUp = false end
-	if input.KeyCode == Enum.KeyCode.Q then keyDown = false end
-end)
-
-connect(UserInputService.JumpRequest, function()
-	if infJump then
-		local _, _, hum = getChar()
-		if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
-	end
-end)
-
-connect(infJumpBtn.Activated, function()
-	playDing()
-	infJump = not infJump
-	setToggleVisual(infJumpBtn, "Infinite Jump", infJump)
-end)
-
-local function restoreCollisions()
-	for part in pairs(savedCollide) do
-		if part and part.Parent then part.CanCollide = true end
-	end
-	table.clear(savedCollide)
-end
-
-local function setNoclip(state)
-	noclip = state
-	setToggleVisual(noclipBtn, "Noclip", state)
-	if not state then restoreCollisions() end
-end
-
-connect(noclipBtn.Activated, function()
-	playDing()
-	setNoclip(not noclip)
-end)
-
-local function clearFloatPlatform()
-	if floatPlatform then floatPlatform:Destroy() floatPlatform = nil end
-end
-
-local function setFloat(state)
-	floating = state
-	setToggleVisual(floatBtn, "Float", state)
-	if state then
-		if not floatPlatform then
-			floatPlatform = make("Part", {
-				Name = "ErrorsAdminFloatPlatform",
-				Size = Vector3.new(10, 1, 10),
-				Anchored = true,
-				CanCollide = true,
-				Transparency = 1,
-			}, workspace)
-		end
-	else
-		clearFloatPlatform()
-	end
-end
-
-connect(floatBtn.Activated, function()
-	playDing()
-	setFloat(not floating)
-end)
-
-local function clearInvisibleState()
-	invisible = false
-	if invisPlatform then invisPlatform:Destroy() invisPlatform = nil end
-	setToggleVisual(invisBtn, "Invisible", false)
-end
-
-local function setInvisible(state)
-	invisible = state
-	setToggleVisual(invisBtn, "Invisible", state)
-	local _, hrp = getChar()
-	if state and hrp then
-		hrp.CFrame = hrp.CFrame - Vector3.new(0, HIDE_DEPTH, 0)
-		invisPlatform = make("Part", {
-			Name = "ErrorsAdminInvisPlatform",
-			Size = Vector3.new(30, 1, 30),
-			Anchored = true,
-			CanCollide = true,
-			Transparency = 1,
-			CFrame = hrp.CFrame - Vector3.new(0, 3.5, 0),
-		}, workspace)
-	else
-		clearInvisibleState()
-	end
-end
-
-connect(invisBtn.Activated, function()
-	playDing()
-	setInvisible(not invisible)
-end)
-
-local function applyHighlight(model, color, name)
-	if not model:FindFirstChild(name) then
-		local hl = Instance.new("Highlight")
-		hl.Name = name
-		hl.FillColor = color
-		hl.OutlineColor = color
-		hl.FillTransparency = 0.5
-		hl.OutlineTransparency = 0
-		hl.Parent = model
-	end
-end
-
-local function removeHighlight(model, name)
-	local hl = model:FindFirstChild(name)
-	if hl then hl:Destroy() end
-end
-
-local function updateEsp()
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= player and p.Character then
-			if playerEspEnabled then
-				applyHighlight(p.Character, Color3.fromRGB(0, 255, 100), "PlayerESP_Highlight")
-			else
-				removeHighlight(p.Character, "PlayerESP_Highlight")
-			end
-		end
-	end
-
-	if npcEspEnabled then
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") and not Players:GetPlayerFromCharacter(obj) then
-				applyHighlight(obj, Color3.fromRGB(0, 150, 255), "NPCESP_Highlight")
-			end
-		end
-	else
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			if obj:IsA("Model") then removeHighlight(obj, "NPCESP_Highlight") end
-		end
-	end
-end
-
-connect(playerEspBtn.Activated, function()
-	playDing()
-	playerEspEnabled = not playerEspEnabled
-	setToggleVisual(playerEspBtn, "Player ESP", playerEspEnabled)
-	updateEsp()
-end)
-
-connect(npcEspBtn.Activated, function()
-	playDing()
-	npcEspEnabled = not npcEspEnabled
-	setToggleVisual(npcEspBtn, "NPC ESP", npcEspEnabled)
-	updateEsp()
-end)
-
-local function removeTouchTpTool()
-	if tpTool then tpTool:Destroy() tpTool = nil end
-end
-
-local function giveTouchTpTool()
-	removeTouchTpTool()
-	tpTool = Instance.new("Tool")
-	tpTool.Name = "Touch TP"
-	tpTool.RequiresHandle = false
-
-	tpTool.Activated:Connect(function()
-		local mouse = player:GetMouse()
-		local _, hrp = getCh
